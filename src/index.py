@@ -1,9 +1,13 @@
 import os
 import threading
 import webview
+import tkinter as tk
+import subprocess
 
 from time import time
-
+from tkinter import simpledialog, Tk, Label, Button, Radiobutton, IntVar
+from PIL import Image
+from io import BytesIO
 
 class Api:
     def fullscreen(self):
@@ -19,6 +23,142 @@ class Api:
 
     def ls(self):
         return os.listdir('.')
+
+
+def ask_multiple_choice_question(prompt, options):
+    root = Tk()
+    if prompt:
+        Label(root, text=prompt).pack()
+    v = IntVar()
+    for i, option in enumerate(options):
+        Radiobutton(root, text=option, variable=v, value=i).pack(anchor="w")
+    Button(text="Submit", command=root.destroy).pack()
+    root.mainloop()
+    return options[v.get()]
+
+
+def gba_color_to_rgb(color):
+    """Converts a 15-bit GBA color value to RGB."""
+    r = (color & 0x1F) << 3
+    g = ((color >> 5) & 0x1F) << 3
+    b = ((color >> 10) & 0x1F) << 3
+    return r, g, b
+
+
+def convert_palette(f, output_format="rgb"):
+    """Converts a GBA palette file to RGB or hex values."""
+    palette = []
+    while True:
+        color_bytes = f.read(2)
+        if not color_bytes:
+            break
+        color = int.from_bytes(color_bytes, byteorder="little")
+        if output_format == "rgb":
+            palette.append(gba_color_to_rgb(color))
+        else:
+            palette.append(f"#{color:04X}")
+    return palette
+
+
+def open_file_dialog(window):
+    file_types = ('GBA ROM Files (*.gba)', 'All files (*.*)')
+
+    EDS_ROM = window.create_file_dialog(
+        webview.OPEN_DIALOG, allow_multiple=True, file_types=file_types
+    )
+    with open(EDS_ROM[0], 'rb+') as EDS_ROM:
+        graphics_choice = ask_multiple_choice_question(
+            "Which graphics would you like to load?",
+            [
+                "Cards",
+                "Packs"
+            ]
+        )
+        if graphics_choice == 'Cards':
+            EDS_ROM.seek(0x5E047)
+            card_graphics_starting_offset = str(EDS_ROM.read(1).hex())
+            EDS_ROM.seek(-2, 1)
+            card_graphics_starting_offset = card_graphics_starting_offset + str(EDS_ROM.read(1).hex())
+            EDS_ROM.seek(-2, 1)
+            card_graphics_starting_offset = card_graphics_starting_offset + str(EDS_ROM.read(1).hex())
+            EDS_ROM.seek(-2, 1)
+            card_graphics_starting_offset = card_graphics_starting_offset + str(EDS_ROM.read(1).hex())
+            EDS_ROM.seek(0x5E043)
+            card_palettes_starting_offset = str(EDS_ROM.read(1).hex())
+            EDS_ROM.seek(-2, 1)
+            card_palettes_starting_offset = card_palettes_starting_offset + str(EDS_ROM.read(1).hex())
+            EDS_ROM.seek(-2, 1)
+            card_palettes_starting_offset = card_palettes_starting_offset + str(EDS_ROM.read(1).hex())
+            EDS_ROM.seek(-2, 1)
+            card_palettes_starting_offset = card_palettes_starting_offset + str(EDS_ROM.read(1).hex())
+            root = tk.Tk()
+            root.withdraw()
+            card_index = int(simpledialog.askstring("Input", "Card index:"))
+            EDS_ROM.seek(int('0x' + card_graphics_starting_offset, 16) - 0x08000000 + 0x10E0 * card_index)
+            card_graphic = EDS_ROM.read(0x10E0)
+            EDS_ROM.seek(int('0x' + card_palettes_starting_offset, 16) - 0x08000000 + 0x80 * card_index)
+            card_palette = EDS_ROM.read(0x80)
+            pixels = [0] * 0x1680
+            def decode(paramArrayOfbyte: bytearray, paramInt1: int):
+                b1 = 0
+                for b2 in range(720):
+                    i1 = paramArrayOfbyte[paramInt1] & 0xFF
+                    paramInt1 += 1
+                    n = paramArrayOfbyte[paramInt1] & 0xFF
+                    paramInt1 += 1
+                    m = paramArrayOfbyte[paramInt1] & 0xFF
+                    paramInt1 += 1
+                    k = paramArrayOfbyte[paramInt1] & 0xFF
+                    paramInt1 += 1
+                    j = paramArrayOfbyte[paramInt1] & 0xFF
+                    paramInt1 += 1
+                    i = paramArrayOfbyte[paramInt1] & 0xFF
+                    paramInt1 += 1
+                    pixels[b1] = i >> 2 & 0x3F
+                    b1 += 1
+                    pixels[b1] = (i & 0x3) << 4 | j >> 4 & 0xF
+                    b1 += 1
+                    pixels[b1] = (j & 0xF) << 2 | k >> 6 & 0x3
+                    b1 += 1
+                    pixels[b1] = k & 0x3F
+                    b1 += 1
+                    pixels[b1] = m >> 2 & 0x3F
+                    b1 += 1
+                    pixels[b1] = (m & 0x3) << 4 | n >> 4 & 0xF
+                    b1 += 1
+                    pixels[b1] = (n & 0xF) << 2 | i1 >> 6 & 0x3
+                    b1 += 1
+                    pixels[b1] = i1 & 0x3F
+                    b1 += 1
+                return pixels
+            card_graphic = decode(card_graphic, 0)
+            output = open('output.8bpp', 'wb')
+            output.write(bytes(card_graphic))
+            output = open('output.gbapal', 'wb')
+            output.write(bytes(card_palette))
+            output.close()
+            subprocess.call(['gbagfx.exe', 'output.8bpp', 'output.png', '-palette', 'output.gbapal', '-mwidth', '9'])
+            card_graphic = Image.open('output.png')
+            sub_image = card_graphic.crop(box=(0,0,8,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(0,0))
+            sub_image = card_graphic.crop(box=(8,0,16,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(8,0))
+            sub_image = card_graphic.crop(box=(16,0,24,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(16,0))
+            sub_image = card_graphic.crop(box=(24,0,32,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(24,0))
+            sub_image = card_graphic.crop(box=(32,0,40,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(32,0))
+            sub_image = card_graphic.crop(box=(40,0,48,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(40,0))
+            sub_image = card_graphic.crop(box=(48,0,56,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(48,0))
+            sub_image = card_graphic.crop(box=(56,0,64,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(56,0))
+            sub_image = card_graphic.crop(box=(64,0,72,80)).transpose(Image.FLIP_LEFT_RIGHT)
+            card_graphic.paste(sub_image, box=(64,0))
+            card_graphic.save('output.png')
+
 
 
 def get_entrypoint():
@@ -64,5 +204,5 @@ def update_ticker():
 
 
 if __name__ == '__main__':
-    window = webview.create_window('pywebview-react boilerplate', entry, js_api=Api())
-    webview.start(update_ticker, debug=True)
+    window = webview.create_window('Open EDS ROM', entry, js_api=Api())
+    webview.start(open_file_dialog, window, debug=True)

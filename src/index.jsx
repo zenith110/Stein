@@ -1,18 +1,14 @@
 import React from 'react'
 import ReactDOM from 'react-dom'
 
-import Header from './components/Header/Header'
-import Editor from './components/Editor/Editor'
-import Ticker from './components/Ticker/Ticker'
+import Graphics from './components/Graphics/Graphics'
 
 import './index.scss'
 
 const App = function() {
   return (
     <>
-      <Header/>
-      <Ticker/>
-      <Editor/>
+      <Graphics/>
     </>
   )
 }
